@@ -2,15 +2,113 @@
 
 (** * The Freudenthal Suspension Theorem, and related results. *)
 
-Require Import Overture PathGroupoids Fibrations Equivalences Trunc EquivalenceVarieties Forall Sigma Paths Unit Universe Arrow Connectedness Suspension Truncations.
+Require Import Overture PathGroupoids Fibrations Equivalences Trunc EquivalenceVarieties Forall Sigma Paths Unit Universe Arrow Connectedness Suspension Truncations HoTT.
 Local Open Scope path_scope.
 Local Open Scope equiv_scope.
 Generalizable Variables X A B f g n.
+
+(** ** Auxiliary lemmas *)
 
 (* TODO: move! *)
 Definition ap10_path_forall `{Funext} {A B : Type} (f g : A -> B) (h : f == g)
   : ap10 (path_forall f g h) == h
 := apD10_path_forall f g h.
+
+(** Infrastructure for handling axioms at a second universe level *)
+Inductive Large (X : Type) := to_large (x : X) : Large X.
+
+Definition from_large {X:Type} (l : Large X) : X
+  := match l with to_large x => x end.
+ 
+Definition with_large {X : Type} {A : Type} : (X -> A) -> (Large X) -> A
+  := fun f l => f (from_large l).
+
+Definition with_large_D {X : Type} {P : X -> Type} : (forall x, P x) -> (forall l, P (from_large l))
+  := fun f l => f (from_large l).
+
+(** TODO: move the following few lemmas. *)
+Lemma transport_as_ap {A} (P : A -> Type) {x y} (p : x = y)
+  : transport P p == transport idmap (ap P p).
+Proof.
+  intros ?; destruct p; exact 1.
+Defined.
+
+(** A sequence of transport lemmas about the kind of transport that occurs in Freudenthal. *)
+(* TODO: move! *)
+Definition pathD_fib `{Funext} `{Univalence}
+  {A : Type} (B : A -> Type)
+  {a1 a2 : A} (q : a1 = a2)
+  (P1 : B a1 -> Type) (P2 : B a2 -> Type)
+  (F : forall z : B a1, P1 z <~> P2 (q # z))
+: (transport (fun a => (B a -> Type)) q P1 = P2).
+Proof.
+  destruct q; simpl in *.
+  apply path_arrow. intros z.
+  apply path_universe_uncurried, F.
+Defined.
+
+Definition pathD_fib_inv
+  {A : Type} (B : A -> Type)
+  {a1 a2 : A} (q : a1 = a2)
+  (P1 : B a1 -> Type) (P2 : B a2 -> Type)
+  (Q : transport (fun a => (B a -> Type)) q P1 = P2)
+: forall z : B a1, P1 z <~> P2 (q # z).
+Proof.
+  destruct q; simpl in *.
+  intros z. apply equiv_path, ap10, Q.
+Defined.
+
+Instance isequiv_pathD_fib `{Funext} `{Univalence}
+  {A : Type} (B : A -> Type)
+  {a1 a2 : A} (q : a1 = a2)
+  (P1 : B a1 -> Type) (P2 : B a2 -> Type)
+: IsEquiv (pathD_fib B q P1 P2).
+Proof.
+  refine (isequiv_adjointify _ (pathD_fib_inv _ _ _ _) _ _).
+    intros Q. destruct q; simpl in *.
+    path_via (path_arrow P1 P2 (fun z : B a1 => ap10 Q z)).
+      apply ap, path_forall. intros z. apply eissect.
+    apply eta_path_arrow.
+  intros F. destruct q; simpl in *.
+  apply path_forall; intros z.
+  path_via (equiv_path _ _ (path_universe_uncurried (F z))).
+    apply ap. refine (ap10_path_arrow _ _ _ _).
+  apply eisretr.
+Defined.
+
+Lemma pathD_fib_inv_apD `{Funext} `{Univalence}
+  {A : Type} {B : A -> Type} (C : forall a, B a -> Type)
+  {a1 a2 : A} (q : a1 = a2)
+  (b : B a1) (c : C a1 b)
+: (pathD_fib B q (C a1) (C a2)) ^-1 (apD C q) b c
+  = transportD B C q b c.
+Proof.
+  destruct q; simpl in *. exact 1.
+Defined.
+
+
+Lemma transportD'
+  {A : Type} (B : A -> Type) (C : forall a : A, B a -> Type)
+  {x1 x2 : A} (p : x1 = x2) (y : B x1)
+: C x1 y -> C x2 (transport B p y).
+Proof.
+  refine (transport idmap _).
+  refine (_ @ ap10 (apD C p) _).
+  apply inverse.
+  refine (transport_arrow _ _ _ @ _).
+  refine (transport_const _ _ @ _).
+  apply ap, transport_Vp.
+Defined.
+
+Arguments transportD' / [_] _ _ [_ _] _ _ _.
+
+Lemma transportD_as_apD
+  {A : Type} (B : A -> Type) (C : forall a : A, B a -> Type)
+  {x1 x2 : A} (p : x1 = x2) (y : B x1)
+: transportD B C p y == transportD' B C p y.
+Proof.
+  intros ?; destruct p; simpl. exact 1.
+Defined.
 
 (* ** Connectedness of the suspension *)
 
@@ -31,7 +129,7 @@ Defined.
 Section Freudenthal.
 
 (** We assume funext and univalence.  In fact, since we will use funext at two different levels and local assumptions are monomorphic, we need to assume funext twice; we give the second assumption of it a name (so we can use it explicitly when we want it), and a different type (so it doesn’t get used when we don’t want it). TODO: perhaps this could be handled in a more uniform way?? *)
-Context `{Funext} (funext_large : Funext * Unit) `{Univalence}
+Context `{Funext} (funext_large : Large Funext) `{Univalence}
         {n : trunc_index} {Hn : ~ n = minus_two}
         (X : Type) (x0:X) `{IsConnMap n _ _ (unit_name x0)}.
 
@@ -65,7 +163,27 @@ Definition FST_Codes_So (q : No = So)
 Definition hfiber_pair {A B} {f: A -> B} {b} (a:A) (p:f a = b) : hfiber f b
   := (a;p).
 
-Definition FST_Codes_cross (x1 : X) (q : No = So)
+Definition FST_Codes_cross (x1 : X) (p : No = No)
+  : FST_Codes_No p -> FST_Codes_So (p @ mer x1).
+Proof.
+  unfold FST_Codes_No, FST_Codes_So, mer'.
+  apply Truncation_rect_nondep.
+  intros [x2 r]. revert x1 x2 r.
+  refine (@wedge_incl_elim_uncurried _ _ n n X x0 _ X x0 _
+    (fun x1 x2 => (mer x2 @ (mer x0) ^ = p
+           -> Truncation (n -2+ n) (hfiber mer (p @ mer x1)))) _ _).
+  apply (conn_pointed_type x0). apply (conn_pointed_type x0).  
+  intros; apply trunc_arrow.
+  exists (fun b s => truncation_incl (hfiber_pair b
+                              ((concat_pV_p _ _)^ @ whiskerR s _))).
+  exists (fun a r => truncation_incl (hfiber_pair a
+      ((concat_1p _)^ @ whiskerR (concat_pV _)^ _ @ whiskerR r _))).
+  apply path_forall; intros s. apply ap, ap, whiskerR. clear p s.
+  generalize (mer x0). intros p; destruct p; exact 1.
+Defined.
+
+(** Obsolete? *)
+Definition FST_Codes_cross' (x1 : X) (q : No = So)
   : FST_Codes_No (q @ (mer x1) ^) -> FST_Codes_So q.
 Proof.
   unfold FST_Codes_No, FST_Codes_So, mer'.
@@ -84,7 +202,44 @@ Proof.
 Defined.
 
 (** We will need to show that [FST_Codes_cross] is an equivalence, for each [x1, q]. By connectedness of [X], it will be enough to show this for the case [x1 = x0]; to show this, we first write that case in a tidier form. *)
-Definition FST_Codes_cross_x0 (q : No = So)
+Definition FST_Codes_cross_x0 (p : No = No)
+  : FST_Codes_No p -> FST_Codes_So (p @ mer x0).
+Proof.
+  unfold FST_Codes_No, FST_Codes_So.
+  apply functor_Truncation, (functor_sigma idmap).
+  unfold mer'; intros x1. apply moveL_pM.
+Defined.
+
+Definition isequiv_FST_Codes_cross (x : X) (p : No = No)
+  : IsEquiv (FST_Codes_cross x p).
+Proof.
+  revert x. 
+  apply (@conn_map_elim _ _ _ (unit_name x0) _
+    (fun x => IsEquiv (FST_Codes_cross x p))).
+    intros x; generalize dependent n. intros [ | n'] imposs.
+      destruct (imposs 1).
+      intros ?. apply (@trunc_leq minus_one). exact tt. apply hprop_isequiv.
+  intros []. unfold FST_Codes_cross.
+  apply (isequiv_homotopic (FST_Codes_cross_x0 p)). Focus 2.
+    apply Truncation_rect. intros ?; apply trunc_succ.
+    intros [x r]; simpl.
+    unfold functor_sigma; simpl.
+    apply symmetry.
+    apply @concat with (y := @truncation_incl (n -2+ n) _ (hfiber_pair x
+           ((concat_pV_p (mer x) (mer x0)) ^ @ whiskerR r (mer x0)))).
+    refine ((ap10 (wedge_incl_comp1 x0 x0 _ _ _ _ x) r)).
+    apply ap, ap. destruct r; simpl. unfold mer'.
+    assert (lem : forall (A : Type) (a b c : A) (p : a = b) (q : c = b),
+      (concat_pV_p p q) ^ @ 1 = moveL_pM q p (p @ q^) 1).
+    intros A a b c p q. destruct p, q. exact 1.
+    apply lem.
+  unfold FST_Codes_cross_x0.
+  apply isequiv_functor_Truncation, @isequiv_functor_sigma. refine _.
+  intros a. apply isequiv_moveL_pM.
+Qed.
+
+(** Obsolete? *)
+Definition FST_Codes_cross_x0' (q : No = So)
   : FST_Codes_No (q @ (mer x0)^) -> FST_Codes_So q.
 Proof.
   unfold FST_Codes_No, FST_Codes_So.
@@ -92,17 +247,18 @@ Proof.
   unfold mer'; intros x1. apply cancelR.
 Defined.
 
-Definition isequiv_FST_Codes_cross (x : X) (q : No = So)
-  : IsEquiv (FST_Codes_cross x q).
+(** Obsolete? *)
+Definition isequiv_FST_Codes_cross' (x : X) (q : No = So)
+  : IsEquiv (FST_Codes_cross' x q).
 Proof.
   revert x. 
   apply (@conn_map_elim _ _ _ (unit_name x0) _
-    (fun x => IsEquiv (FST_Codes_cross x q))).
+    (fun x => IsEquiv (FST_Codes_cross' x q))).
     intros x; generalize dependent n. intros [ | n'] imposs.
       destruct (imposs 1).
       intros ?. apply (@trunc_leq minus_one). exact tt. apply hprop_isequiv.
   intros []. unfold FST_Codes_cross.
-  apply (isequiv_homotopic (FST_Codes_cross_x0 q)). Focus 2.
+  apply (isequiv_homotopic (FST_Codes_cross_x0' q)). Focus 2.
     apply Truncation_rect. intros ?; apply trunc_succ.
     intros [x r]; simpl.
     unfold functor_sigma; simpl.
@@ -116,14 +272,24 @@ Definition FST_Codes
   : forall (y : Susp X), (No = y) -> Type.
 Proof.
   apply (Susp_rect (fun y => (No = y -> Type)) FST_Codes_No FST_Codes_So).
-  intros x. apply (@path_forall (fst funext_large)); intros p.
+  intros x. apply (with_large (@pathD_fib) funext_large). refine _.
+  intros p. equiv_via (FST_Codes_So (p @ (mer x))).
+  exists (FST_Codes_cross x p). apply isequiv_FST_Codes_cross.
+  refine (equiv_transport _ _ _ _). apply symmetry, transport_paths_r.
+Defined.
+
+Definition FST_Codes'
+  : forall (y : Susp X), (No = y) -> Type.
+Proof.
+  apply (Susp_rect (fun y => (No = y -> Type)) FST_Codes_No FST_Codes_So).
+  intros x. apply (with_large (@path_forall) funext_large); intros p.
   refine (transport_arrow _ _ _ @ _).
   refine (transport_const _ _ @ _).
   path_via (FST_Codes_No (p @ (mer x)^)).
     apply ap, transport_paths_r.
   apply path_universe_uncurried.
-  exists (FST_Codes_cross x p).
-  apply isequiv_FST_Codes_cross.
+  exists (FST_Codes_cross' x p).
+  apply isequiv_FST_Codes_cross'.
 Defined.
 
 (** It now remains to show that each [FST_Codes y p] is contractible. It is easy to provide a canonical inhabitant, by transport. (More directly, we could use path-induction, but we will later need to use transport lemmas to reason about this.) *)
@@ -137,46 +303,88 @@ Proof.
   apply concat_1p.
 Defined.
 
-(** TODO: move the following few lemmas. *)
-Lemma transport_as_ap {A} (P : A -> Type) {x y} (p : x = y)
-  : transport P p == transport idmap (ap P p).
-Proof.
-  intros ?; destruct p; exact 1.
-Defined.
-
-Lemma transportD'
-  {A : Type} (B : A -> Type) (C : forall a : A, B a -> Type)
-  {x1 x2 : A} (p : x1 = x2) (y : B x1)
-: C x1 y -> C x2 (transport B p y).
-Proof.
-  refine (transport idmap _).
-  refine (_ @ ap10 (apD C p) _).
-  apply inverse.
-  refine (transport_arrow _ _ _ @ _).
-  refine (transport_const _ _ @ _).
-  apply ap, transport_Vp.
-Defined.
-
-Arguments transportD' / [_] _ _ [_ _] _ _ _.
-
-Lemma transportD_as_apD
-  {A : Type} (B : A -> Type) (C : forall a : A, B a -> Type)
-  {x1 x2 : A} (p : x1 = x2) (y : B x1)
-: transportD B C p y == transportD' B C p y.
-Proof.
-  intros ?; destruct p; simpl. exact 1.
-Defined.
-
 (** A transport lemma. *)
 Definition FST_Codes_transportD_concrete (x1 : X) (p : No = No)
-  : FST_Codes No p -> FST_Codes So (transport (paths No) (mer x1) p).
+  : FST_Codes No p <~> FST_Codes So (transport (paths No) (mer x1) p).
 Proof.
-  intro rr. assert (goal' : FST_Codes So (p @ mer x1)).
-    apply (FST_Codes_cross x1).
-    refine (transport FST_Codes_No _ rr). apply symmetry, concat_pp_V.
-  refine (transport FST_Codes_So _ goal').
+  equiv_via (FST_Codes So (p @ mer x1)).
+  exists (FST_Codes_cross _ _). apply isequiv_FST_Codes_cross.
+  refine (equiv_transport FST_Codes_So _ _ _).
   apply inverse, transport_paths_r.
 Defined.
+
+(** TODO: move! *)
+Definition transportD_pp {A} {B : A -> Type} {C : forall a : A, B a -> Type}
+  (x1 x2 x3 : A) (p : x1 = x2) (q : x2 = x3) (y : B x1) (z : C x1 y)
+: transportD B C (p @ q) y z
+  = transport _ (transport_pp B p q y)^
+      (transportD B C q _ (transportD B C p y z)).
+Proof.
+  destruct p, q. simpl. exact 1.
+Defined.
+
+(* TODO: streamline?? *)
+Definition transportD_FST_Codes (x1 : X) (p : No = No) (rr : FST_Codes No p)
+  : transportD (paths No) FST_Codes (mer x1) p rr 
+  = FST_Codes_transportD_concrete x1 p rr.
+Proof.
+  refine ((@pathD_fib_inv_apD (from_large funext_large) _ _ _ _ _ _ _ _ _)^
+           @ _).
+  path_via ((@pathD_fib (from_large funext_large) _ _ (paths No) _ _ (mer x1) (FST_Codes No) (FST_Codes So))^-1
+    (@pathD_fib (from_large funext_large) _ _ (paths No) _ _ (mer x1) (FST_Codes No) (FST_Codes So)
+      (fun p0 : No = No =>
+          equiv_composeR'
+            {|
+            equiv_fun := FST_Codes_cross x1 p0;
+            equiv_isequiv := isequiv_FST_Codes_cross x1 p0 |}
+            (equiv_transport FST_Codes_So (p0 @ mer x1)
+               (transport (paths No) (mer x1) p0)
+               (symmetry (transport (paths No) (mer x1) p0) 
+                  (p0 @ mer x1) (transport_paths_r (mer x1) p0))))) p rr).
+    unfold FST_Codes. rewrite Susp_comp_merid; simpl. exact 1.
+  unfold with_large. rewrite eissect. simpl; exact 1.
+Defined.
+
+(* TODO: eliminate! *)
+Definition transportD_inverse {A} {B : A -> Type} {C : forall a : A, B a -> Type}
+  (x1 x2 : A) (p : x1 = x2) (y : B x1)
+: C x2 (transport B p y) -> C x1 y.
+Proof.
+  intros z. refine (_ (transportD B C p^ _ z)).
+  refine (transport (C x1) (transport_Vp _ _ _)).
+Defined.
+
+(* TODO: move! *)
+Definition isequiv_transportD {A} {B : A -> Type} {C : forall a : A, B a -> Type}
+  (x1 x2 : A) (p : x1 = x2) (y : B x1)
+: IsEquiv (transportD B C p y).
+Proof.
+  refine (isequiv_adjointify _ (fun z =>
+    transport (C x1) (transport_Vp _ _ _) (transportD B C p^ _ z)) _ _).
+  intros z. destruct p; simpl. exact 1.
+  intros z. destruct p; simpl. exact 1.
+Defined.
+
+Existing Instance isequiv_transportD.
+
+Definition FST_Codes_contr (y : Susp X) (p : No = y) (rr : FST_Codes y p)
+  : rr = FST_Codes_center y p.
+Proof.
+  destruct p. revert rr. generalize (idpath No); simpl. intros p.
+  apply Truncation_rect. intros rr; apply trunc_succ.
+  intros [x1 r]. destruct r. unfold mer', FST_Codes_center.
+  rewrite transportD_pp.
+  set (HH := (FST_Codes_transportD_concrete x1 1)
+             (FST_Codes_transportD_concrete x0 1)^-1
+             (truncation_incl (x0; concat_pV (mer x0)))).
+  refine (_ @ @ap _ _ _ _ _ _).
+  path_via (transport (FST_Codes No)
+    (transport_paths_r (mer x1 @ (mer x0) ^) 1 @ concat_1p (mer x1 @ (mer x0) ^))
+  (hfiber_pair x1
+    (transport_paths_r (mer x1 @ (mer x0) ^) 1 @ concat_1p (mer x1 @ (mer x0) ^)))).
+  rewrite transportD_FST_Codes.
+Defined.
+
 
 Definition FST_Codes_transportD (x1 : X) (p : No = No) (rr : FST_Codes No p)
   : transportD (paths No) FST_Codes (mer x1) p rr 
@@ -185,7 +393,7 @@ Proof.
   refine (transportD_as_apD _ _ _ _ _ @ _).
   unfold transportD'. 
   unfold FST_Codes. rewrite (Susp_comp_merid _ _ _ _ x1); simpl.
-    rewrite (@ap10_path_forall (fst funext_large)).
+    rewrite (with_large ap10_path_forall funext_large).
   unfold FST_Codes_transportD_concrete.
   rewrite ! transport_pp.
   refine (transport_path_universe _ _ @ _).
